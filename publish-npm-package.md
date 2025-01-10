@@ -505,7 +505,468 @@ Add the `exports:check` script to your `ci` script in your `package.json`:
 ```json
 {
 	"scripts": {
-		"ci": "npm run build && npm run check-format && npm run check-exports"
+		"ci": "npm run build && npm run format:check && npm run exports:check"
 	}
 }
 ```
+
+## 6: Using `tsup` to Dual Publish
+
+If you want to publish both CJS and ESM code, you can use `tsup`. This is a tool built on top of `esbuild` that compiles your TypeScript code into both formats.
+
+My personal recommendation would be to skip this step, and only ship ES Modules. This makes your setup significantly simpler, and avoids many of the pitfalls of dual publishing, like [Dual Package Hazard](https://github.com/GeoffreyBooth/dual-package-hazard).
+
+But if you want to, go ahead.
+
+### 6.1: Install `tsup`
+
+Run the following command to install `tsup`:
+
+```bash
+npm install --save-dev tsup
+```
+
+### 6.2: Create a `tsup.config.ts` file
+
+Create a tsup.config.ts file with the following content:
+
+```ts
+import { defineConfig } from "tsup";
+
+export default defineConfig({
+	entryPoints: ["src/index.ts"],
+	format: ["cjs", "esm"],
+	dts: true,
+	outDir: "dist",
+	clean: true,
+});
+```
+
+- `entryPoints` is an array of entry points for your package. In this case, we're using `src/index.ts`.
+- `format` is an array of formats to output. We're using cjs (CommonJS) and esm (ECMAScript modules).
+- `dts` is a boolean that tells `tsup` to generate declaration files.
+- `outDir` is the output directory for the compiled code.
+- `clean` tells `tsup` to clean the output directory before building.
+
+### 6.3: Change the `build` script
+
+Change the `build` script in your `package.json` to the following:
+
+```json
+{
+	"scripts": {
+		"build": "tsup"
+	}
+}
+```
+
+We'll now be running `tsup` to compile our code instead of `tsc`.
+
+### 6.4: Add an `exports` field
+
+Add an `exports` field to your `package.json` with the following content:
+
+```json
+{
+	"exports": {
+		"./package.json": "./package.json",
+		".": {
+			"import": "./dist/index.js",
+			"default": "./dist/index.cjs"
+		}
+	}
+}
+```
+
+The `exports` field tells programs consuming your package how to find the CJS and ESM versions of your package. In this case, we're pointing folks using `import` to `dist/index.js` and folks using `require` to `dist/index.cjs`.
+
+It's also recommended to add `./package.json` to the `exports` field. This is because certain tools need easy access to your `package.json` file.
+
+### 6.5: Try `exports:check` again
+
+Run the following command to check if all exports from your package are correct:
+
+```bash
+npm run exports:check
+```
+
+Now, everything is green:
+
+```
+┌───────────────────┬───────────────────┐
+│                   │ "tt-package-demo" │
+├───────────────────┼───────────────────┤
+│ node10            │ 🟢                │
+├───────────────────┼───────────────────┤
+│ node16 (from CJS) │ 🟢 (CJS)          │
+├───────────────────┼───────────────────┤
+│ node16 (from ESM) │ 🟢 (ESM)          │
+├───────────────────┼───────────────────┤
+│ bundler           │ 🟢                │
+└───────────────────┴───────────────────┘
+```
+
+### 6.6: Turn TypeScript into a linter
+
+We're no longer running `tsc` to compile our code. And `tsup` doesn't actually check our code for errors - it just turns it into JavaScript.
+
+This means that our `ci` script won't error if we have TypeScript errors in our code. Let's fix this.
+
+#### 6.6.1: Add `noEmit` to `tsconfig.json`
+
+Add a `noEmit` field to your `tsconfig.json`:
+
+```json
+{
+	"compilerOptions": {
+		// ...other options
+		"noEmit": true
+	}
+}
+```
+
+#### 6.6.2: Remove unused fields from `tsconfig.json`
+
+Remove the following fields from your `tsconfig.json`:
+
+- `outDir`
+- `rootDir`
+- `sourceMap`
+- `declaration`
+- `declarationMap`
+
+They are no longer needed in our new 'linting' setup.
+
+#### 6.6.3: Change `module` to `Preserve`
+
+Optionally, you can now change `module` to `Preserve` in your `tsconfig.json`:
+
+```json
+{
+	"compilerOptions": {
+		// ...other options
+		"module": "Preserve"
+	}
+}
+```
+
+This means you'll no longer need to import your files with `.js` extensions. This means that `index.ts` can look like this instead:
+
+```ts
+export * from "./utils";
+```
+
+#### 6.6.4: Add a `lint` script
+
+Add a `lint` script to your `package.json` with the following content:
+
+```json
+{
+	"scripts": {
+		"lint": "tsc"
+	}
+}
+```
+
+This will run TypeScript as a linter.
+
+#### 6.6.5: Add `lint` to your `ci` script
+
+Add the `lint` script to your `ci` script in your `package.json`:
+
+```json
+{
+	"scripts": {
+		"ci": "npm run build && npm run format:check && npm run exports:check && npm run lint"
+	}
+}
+```
+
+Now, we'll get TypeScript errors as part of our CI process.
+
+## 7: Testing with Vitest
+
+In this section, we'll install `vitest`, create a test, set up a `test` script, run the `test` script, set up a `dev` script, and add the `test` script to our `ci` script.
+
+`vitest` is a modern test runner for ESM and TypeScript. It's like Jest, but better.
+
+### 7.1: Install `vitest`
+
+Run the following command to install `vitest`:
+
+```bash
+npm install --save-dev vitest
+```
+
+### 7.2: Create a test
+
+Create a `src/utils.test.ts` file with the following content:
+
+```ts
+import { add } from "./utils.js";
+import { test, expect } from "vitest";
+
+test("add", () => {
+	expect(add(1, 2)).toBe(3);
+});
+```
+
+This is a simple test that checks if the `add` function returns the correct value.
+
+### 7.3: Set up a `test` script
+
+Add a `test` script to your `package.json` with the following content:
+
+```bash
+{
+  "scripts": {
+    "test": "vitest run"
+  }
+}
+```
+
+`vitest run` runs all tests in your project once, without watching.
+
+### 7.4: Run the `test` script
+
+Run the following command to run your tests:
+
+```bash
+npm run test
+```
+
+You should see the following output:
+
+```
+ ✓ src/utils.test.ts (1)
+   ✓ hello
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+```
+
+This indicates that your test passed successfully.
+
+### 7.5: Set up `dev` script
+
+A common workflow is to run your tests in watch mode while developing. Add a `dev` script to your `package.json` with the following content:
+
+```json
+{
+	"scripts": {
+		"dev": "vitest"
+	}
+}
+```
+
+This will run your tests in watch mode.
+
+### 7.6: Adding to our CI script
+
+Add the `test` script to your `ci` script in your `package.json`:
+
+```json
+{
+	"scripts": {
+		"ci": "npm run build && npm run format:check && npm run exports:check && npm run lint && npm run test"
+	}
+}
+```
+
+## 8. Set up our CI with GitHub Actions
+
+In this section, we'll create a GitHub Actions workflow that runs our CI process on every commit and pull request.
+
+This is a crucial step in ensuring that our package is always in a working state.
+
+### 8.1: Creating our workflow
+
+Create a `.github/workflows/ci.yml` file with the following content:
+
+```yaml
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run CI
+        run: npm run ci
+```
+
+This file is what GitHub uses as its instructions for running your CI process.
+
+- `name` is the name of the workflow.
+- `on` specifies when the workflow should run. In this case, it runs on pull requests and pushes to the main branch.
+- `concurrency` prevents multiple instances of the workflow from running at the same time, using `cancel-in-progress` to cancel any existing runs.
+- `jobs` is a set of jobs to run. In this case, we have one job called `ci`.
+- `actions/checkout@v4` checks out the code from the repository.
+- `actions/setup-node@v4` sets up Node.js and npm.
+- `npm install` installs the project's dependencies.
+- `npm run ci` runs the project's CI script.
+
+If any part of our CI process fails, the workflow will fail and GitHub will let us know by showing a red cross next to our commit.
+
+### 8.2: Testing our workflow
+
+Push your changes to GitHub and check the Actions tab in your repository. You should see your workflow running.
+
+This will give us a warning on every commit made, and every PR made to the repository.
+
+## 9. Publishing with Changesets
+
+In this section, we'll install `@changesets/cli`, initialize Changesets, make changeset releases public, set `commit` to `true`, set up a `local-release` script, add a changeset, commit your changes, run the `local-release` script, and finally see your package on npm.
+
+Changesets is a tool that helps you version and publish your package. It's an incredible tool that I recommend to anyone publishing packages to npm.
+
+### 9.1: Install `@changesets/cli`
+
+Run the following command to initialise Changesets:
+
+```bash
+npm install --save-dev @changesets/cli
+```
+
+### 9.2: Initialize Changesets
+
+Run the following command to initialize Changesets:
+
+```bash
+npx changeset init
+```
+
+This will create a `.changeset` folder in your project, containing a `config.json` file. This is also where your changesets will live.
+
+### 9.3: Make changeset releases public
+
+In `.changeset/config.json`, change the `access` field to `public`:
+
+```json
+// .changeset/config.json
+{
+	"access": "public"
+}
+```
+
+Without changing this field, `changesets` won't publish your package to npm.
+
+### 9.4: Set `commit` to `true`
+
+In `.changeset/config.json`, change the `commit` field to `true`:
+
+```json
+// .changeset/config.json
+{
+	"commit": true
+}
+```
+
+This will commit the changeset to your repository after versioning.
+
+### 9.5: Set up a `local-release` script
+
+Add a `local-release` script to your `package.json` with the following content:
+
+```json
+{
+	"scripts": {
+		"local-release": "changeset version && changeset publish"
+	}
+}
+```
+
+This script will run your CI process and then publish your package to npm. This will be the command you run when you want to release a new version of your package from your local machine.
+
+### 9.6 Run CI in `prepublishOnly`
+
+Add a `prepublishOnly` script to your `package.json` with the following content:
+
+```json
+{
+	"scripts": {
+		"prepublishOnly": "npm run ci"
+	}
+}
+```
+
+This will automatically run your CI process before publishing your package to npm.
+
+This is useful to separate from the `local-release` script in case a user accidentally runs npm publish without running `local-release`.
+
+### 9.7: Add a changeset
+
+Run the following command to add a changeset:
+
+```bash
+npx changeset
+```
+
+This will open an interactive prompt where you can add a changeset. Changesets are a way to group changes together and give them a version number.
+
+Mark this release as a `patch` release, and give it a description like "Initial release".
+
+This will create a new file in the `.changeset` folder with the changeset.
+
+### 9.8: Commit your changes
+
+Commit your changes to your repository:
+
+```bash
+git add .
+git commit -m "Prepare for initial release"
+```
+
+### 9.9: Run the `local-release` script
+
+Run the following command to release your package:
+
+```bash
+npm run local-release
+```
+
+This will run your CI process, version your package, and publish it to npm.
+
+It will have created a `CHANGELOG.md` file in your repository, detailing the changes in this release. This will be updated each time you release.
+
+### 9.10: See your package on npm
+
+Go to:
+
+```
+http://npmjs.com/package/<your package name>
+```
+
+You should see your package there! You've done it! You've published to npm!
+
+## Summary
+
+You now have a fully set up package. You've set up:
+
+- A TypeScript project with the latest settings
+- Prettier, which both formats your code and checks that it's formatted correctly
+- `@arethetypeswrong/cli`, which checks that your package exports are correct
+- `tsup`, which compiles your TypeScript code to JavaScript
+- `vitest`, which runs your tests
+- GitHub Actions, which runs your CI process
+- Changesets, which versions and publishes your package
